@@ -1,0 +1,8 @@
+venv/
+*.db
+webappenv/
+__pycache__/
+*.pyc
+.DS_Store
+@eaDir/
+.idea/

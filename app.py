@@ -6,19 +6,27 @@ import certifi
 import geopy.geocoders
 from geopy.geocoders import Nominatim
 
-
+# Initialize Flask with the new folder name for templates
 app = Flask(__name__)
-# Ensure the DB is stored in the same folder as the script
+
 DB_PATH = os.path.join(os.path.dirname(__file__), 'photos.db')
 
-# Global state to prevent concurrent scans
-is_scanning = False
-# This tells geopy exactly where to find the trusted certificates
+# --- GLOBAL SCAN STATE ---
+scan_status_info = {
+    "active": False,
+    "percentage": 0,
+    "current_file": "",
+    "stop_requested": False,
+    "last_run": "Never"
+}
+
+# SSL Context for Geopy on Synology
 ctx = ssl.create_default_context(cafile=certifi.where())
 geolocator = Nominatim(
     user_agent="syno_mapper_v1", 
     ssl_context=ctx
 )
+
 # --- DATABASE HELPERS ---
 
 def get_db_connection():
@@ -64,46 +72,68 @@ def extract_gps(path):
     except: pass
     return None
 
-# --- CORE SCANNING LOGIC ---
+# --- UPDATED CORE SCANNING LOGIC ---
 
-def scan_photos():
-    global is_scanning
-    if is_scanning: return
-    is_scanning = True
-    print(f"[{datetime.now()}] Scan started...")
+def scan_photos_task():
+    global scan_status_info
+    if scan_status_info["active"]: return
+    
+    scan_status_info["active"] = True
+    scan_status_info["stop_requested"] = False
+    scan_status_info["percentage"] = 0
     
     conn = get_db_connection()
     paths = [row['path'] for row in conn.execute("SELECT path FROM scan_paths").fetchall()]
     
+    # 1. Collect all files first to calculate percentage
+    all_files = []
     for base_path in paths:
         if not os.path.exists(base_path): continue
         for root, _, files in os.walk(base_path):
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg')):
-                    full_path = os.path.join(root, file)
-                    if conn.execute("SELECT 1 FROM photos WHERE pic_local_path=?", (full_path,)).fetchone():
-                        continue
-                    
-                    gps = extract_gps(full_path)
-                    if gps:
-                        try:
-                            loc = geolocator.reverse(gps, language='en', timeout=10)
-                            addr = loc.raw.get('address', {})
-                            conn.execute("""INSERT INTO photos (pic_local_path, gps_position, city, department, region, country) 
-                                            VALUES (?,?,?,?,?,?)""",
+                    all_files.append(os.path.join(root, file))
+    
+    total_files = len(all_files)
+    
+    # 2. Process files
+    for index, full_path in enumerate(all_files):
+        # Check if user clicked STOP
+        if scan_status_info["stop_requested"]:
+            print("Scan stopped by user.")
+            break
+            
+        # Update progress for UI
+        scan_status_info["current_file"] = os.path.basename(full_path)
+        if total_files > 0:
+            scan_status_info["percentage"] = int(((index + 1) / total_files) * 100)
+
+        # Database processing
+        if not conn.execute("SELECT 1 FROM photos WHERE pic_local_path=?", (full_path,)).fetchone():
+            gps = extract_gps(full_path)
+            if gps:
+                try:
+                    loc = geolocator.reverse(gps, language='en', timeout=10)
+                    addr = loc.raw.get('address', {})
+                    conn.execute("""INSERT INTO photos (pic_local_path, gps_position, city, department, region, country) 
+                                    VALUES (?,?,?,?,?,?)""",
                                 (full_path, gps, 
                                  addr.get('city') or addr.get('town') or addr.get('village'), 
                                  addr.get('county'), addr.get('state'), addr.get('country')))
-                            conn.commit()
-                            time.sleep(1.1) # Respect Nominatim usage policy
-                        except Exception as e:
-                            print(f"Geocoding error for {full_path}: {e}")
+                    conn.commit()
+                    time.sleep(1.1) 
+                except Exception as e:
+                    print(f"Geocoding error for {full_path}: {e}")
     
-    conn.execute("UPDATE settings SET last_run = ? WHERE id = 1", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    # Wrap up
+    last_run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("UPDATE settings SET last_run = ? WHERE id = 1", (last_run_time,))
     conn.commit()
     conn.close()
-    is_scanning = False
-    print(f"[{datetime.now()}] Scan finished.")
+    
+    scan_status_info["active"] = False
+    scan_status_info["last_run"] = last_run_time
+    print("Scan finished.")
 
 # --- BACKGROUND SCHEDULER ---
 
@@ -118,15 +148,12 @@ def run_scheduler():
 def index():
     conn = get_db_connection()
     visited_countries = [row['country'] for row in conn.execute("SELECT DISTINCT country FROM photos WHERE country IS NOT NULL").fetchall()]
-
     results = []
     query = request.form.get('query', '')
-    
     if query:
         lq = f"%{query}%"
         results = conn.execute("""SELECT * FROM photos WHERE city LIKE ? OR department LIKE ? 
                                   OR region LIKE ? OR country LIKE ?""", (lq, lq, lq, lq)).fetchall()
-    
     conn.close()
     return render_template('index.html', results=results, query=query, visited_countries=visited_countries)
 
@@ -144,28 +171,35 @@ def admin():
             hrs = int(request.form.get('interval', 24))
             conn.execute("UPDATE settings SET scan_interval_hours = ? WHERE id = 1", (hrs,))
             schedule.clear('daily_scan')
-            schedule.every(hrs).hours.do(scan_photos).tag('daily_scan')
+            schedule.every(hrs).hours.do(scan_photos_task).tag('daily_scan')
         conn.commit()
     
     paths = conn.execute("SELECT * FROM scan_paths").fetchall()
     sets = conn.execute("SELECT * FROM settings WHERE id = 1").fetchone()
     conn.close()
-    return render_template('admin.html', watched_paths=paths, settings=sets)
+    return render_template('admin.html', watched_paths=paths, settings=sets, scan_info=scan_status_info)
 
-@app.route('/admin/scan_now', methods=['POST'])
-def scan_now():
-    if not is_scanning:
-        threading.Thread(target=scan_photos).start()
-    return redirect(url_for('admin'))
+# --- NEW SCAN PROGRESS ENDPOINTS ---
 
-@app.route('/admin/scan_status')
-def scan_status():
-    return jsonify({"is_scanning": is_scanning})
+@app.route('/start_scan', methods=['POST'])
+def start_scan():
+    if not scan_status_info["active"]:
+        threading.Thread(target=scan_photos_task).start()
+    return jsonify({"status": "started"})
+
+@app.route('/stop_scan', methods=['POST'])
+def stop_scan():
+    scan_status_info["stop_requested"] = True
+    return jsonify({"status": "stopping"})
+
+@app.route('/scan_progress')
+def scan_progress():
+    return jsonify(scan_status_info)
 
 @app.route('/admin/data_preview')
 def data_preview():
     conn = get_db_connection()
-    db_content = conn.execute("SELECT * FROM photos ORDER BY id DESC").fetchall()
+    db_content = conn.execute("SELECT * FROM photos ORDER BY id DESC LIMIT 50").fetchall()
     conn.close()
     if not db_content:
         return "<tr><td colspan='4' style='text-align:center; padding:20px;'>Database is empty.</td></tr>"
@@ -189,16 +223,17 @@ def db_reset():
 
 @app.route('/full_image/<path:p>')
 def full_image(p):
+    # Fixed to work with absolute paths on Synology
     return send_file('/' + p)
 
 if __name__ == '__main__':
     init_db()
-    # Load initial interval
     with get_db_connection() as c:
-        row = c.execute("SELECT scan_interval_hours FROM settings WHERE id = 1").fetchone()
+        row = c.execute("SELECT scan_interval_hours, last_run FROM settings WHERE id = 1").fetchone()
         interval = row[0] if row else 24
+        scan_status_info["last_run"] = row[1] if row and row[1] else "Never"
     
-    schedule.every(interval).hours.do(scan_photos).tag('daily_scan')
+    schedule.every(interval).hours.do(scan_photos_task).tag('daily_scan')
     threading.Thread(target=run_scheduler, daemon=True).start()
     
     app.run(host='0.0.0.0', port=5005)

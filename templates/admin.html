@@ -13,26 +13,26 @@
         /* Buttons */
         button { border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
         .btn-blue { background: #0084ff; color: white; width: 100%; font-size: 1.1em; }
-        .btn-blue:disabled { background: #ccc; cursor: not-allowed; }
         .btn-red { background: #fa3e3e; color: white; }
         .btn-green { background: #42b72a; color: white; text-decoration: none; display: inline-block; }
         .btn-grey { background: #e4e6eb; color: #050505; }
         
+        /* Progress Bar */
+        .progress-wrapper { margin-top: 20px; }
+        .progress-container { width: 100%; background: #e4e6eb; height: 14px; border-radius: 7px; overflow: hidden; margin: 10px 0; }
+        #progressBar { width: 0%; height: 100%; background: #0084ff; transition: width 0.3s ease; }
+        .scan-info { display: flex; justify-content: space-between; font-size: 0.9em; color: #65676b; margin-bottom: 5px; }
+
         /* Form elements */
         input[type="text"], input[type="number"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 1em; }
         .path-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f0f2f5; }
         code { background: #f0f2f5; padding: 4px 8px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; }
-
-        /* Loader Spinner */
-        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #0084ff; border-radius: 50%; width: 18px; height: 18px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-right: 10px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
         /* Scrollable Table */
         .table-wrapper { height: 600px; overflow-y: scroll; border: 1px solid #ddd; border-radius: 8px; margin-top: 15px; }
         table { width: 100%; border-collapse: collapse; font-size: 0.85em; text-align: left; }
         thead { position: sticky; top: 0; background: #f8f9fa; z-index: 10; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
         th, td { padding: 12px; border: 1px solid #eee; }
-        tr:hover { background: #f9f9f9; }
     </style>
 </head>
 <body>
@@ -42,18 +42,29 @@
 
     <div class="card">
         <h2>    Manual Scan Control</h2>
-        <form id="scanForm" action="/admin/scan_now" method="POST">
-            <button type="submit" id="scanBtn" class="btn-blue">Scan Now</button>
-        </form>
-        <div id="statusMsg" style="margin-top:15px; color: #0084ff; font-weight: bold; display: none;">
-            <div class="loader"></div> Scan in progress... 
+        
+        <div id="scanInitial">
+            <button onclick="startScan()" class="btn-blue">Start Full Scan Now</button>
         </div>
-        <p style="margin-top: 15px;"><small>Last successful run: <strong>{{ settings['last_run'] or 'Never' }}</strong></small></p>
+
+        <div id="scanActive" style="display: none;">
+            <div class="progress-wrapper">
+                <div class="scan-info">
+                    <span id="currentFile">Initializing...</span>
+                    <span id="percentText">0%</span>
+                </div>
+                <div class="progress-container">
+                    <div id="progressBar"></div>
+                </div>
+            </div>
+            <button onclick="stopScan()" class="btn-red" style="width: 100%; margin-top: 10px;">Stop Current Scan</button>
+        </div>
+
+        <p style="margin-top: 15px;"><small>Last successful run: <strong id="lastRun">{{ scan_info['last_run'] or 'Never' }}</strong></small></p>
     </div>
 
     <div class="card">
         <h3>    Managed Folders</h3>
-        <p><small>Folders the system will monitor for new photos.</small></p>
         {% for p in watched_paths %}
         <div class="path-row">
             <code>{{ p['path'] }}</code>
@@ -84,37 +95,28 @@
 
     <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h3>     Full Database Preview</h3>
+            <h3>    Full Database Preview</h3>
             <span id="recordCount" style="font-weight: bold; color: #0084ff; background: #e7f3ff; padding: 4px 12px; border-radius: 20px; font-size: 0.85em;"></span>
         </div>
-        <p><small>Fetch and view all records currently in the database.</small></p>
-        
         <button type="button" id="previewBtn" class="btn-grey" onclick="togglePreview()">Fetch & View Full DB</button>
 
         <div id="previewContainer" style="display: none;">
             <div class="table-wrapper">
                 <table>
                     <thead>
-                        <tr>
-                            <th>Local Path</th>
-                            <th>GPS Coordinates</th>
-                            <th>City</th>
-                            <th>Country</th>
-                        </tr>
+                        <tr><th>Local Path</th><th>GPS</th><th>City</th><th>Country</th></tr>
                     </thead>
-                    <tbody id="previewBody">
-                        </tbody>
+                    <tbody id="previewBody"></tbody>
                 </table>
             </div>
-            <p style="text-align: right; color: #888; font-size: 0.75em; margin-top: 8px;">(Scroll vertically to view all entries)</p>
         </div>
     </div>
 
     <div class="card" style="border-top: 3px solid #fa3e3e;">
         <h3>    Maintenance</h3>
         <div style="display: flex; gap: 15px;">
-            <a href="/admin/db_dump" class="btn-green" style="padding: 10px 20px;">Backup Database (.db)</a>
-            <form action="/admin/db_reset" method="POST" onsubmit="return confirm('WARNING: This will erase all scanned pictures and folder paths from the database. This cannot be undone. Continue?');">
+            <a href="/admin/db_dump" class="btn-green" style="padding: 10px 20px;">Backup DB</a>
+            <form action="/admin/db_reset" method="POST" onsubmit="return confirm('Erase everything?');">
                 <button type="submit" class="btn-red">Reset Database</button>
             </form>
         </div>
@@ -122,26 +124,55 @@
 </div>
 
 <script>
-    // 1. SCAN STATUS POLLING (Cross-session)
-    function updateScanStatus() {
-        fetch('/admin/scan_status')
+    let pollInterval;
+
+    function startScan() {
+        fetch('/start_scan', {method: 'POST'})
+            .then(() => {
+                document.getElementById('scanInitial').style.display = 'none';
+                document.getElementById('scanActive').style.display = 'block';
+                startPolling();
+            });
+    }
+
+    function stopScan() {
+        if (confirm("Interrupt scan? Current progress will be saved.")) {
+            fetch('/stop_scan', {method: 'POST'});
+        }
+    }
+
+    function startPolling() {
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(updateProgress, 1000); // Fast polling during active scan
+    }
+
+    function updateProgress() {
+        fetch('/scan_progress')
             .then(res => res.json())
             .then(data => {
-                const btn = document.getElementById('scanBtn');
-                const msg = document.getElementById('statusMsg');
-                if (data.is_scanning) {
-                    btn.disabled = true;
-                    btn.innerText = "Scan in Progress...";
-                    msg.style.display = "block";
+                const initialDiv = document.getElementById('scanInitial');
+                const activeDiv = document.getElementById('scanActive');
+                const bar = document.getElementById('progressBar');
+                const percentText = document.getElementById('percentText');
+                const fileText = document.getElementById('currentFile');
+                const lastRunText = document.getElementById('lastRun');
+
+                if (data.active) {
+                    initialDiv.style.display = 'none';
+                    activeDiv.style.display = 'block';
+                    bar.style.width = data.percentage + '%';
+                    percentText.innerText = data.percentage + '%';
+                    fileText.innerText = "Processing: " + data.current_file;
                 } else {
-                    btn.disabled = false;
-                    btn.innerText = "Scan Now";
-                    msg.style.display = "none";
+                    initialDiv.style.display = 'block';
+                    activeDiv.style.display = 'none';
+                    lastRunText.innerText = data.last_run;
+                    clearInterval(pollInterval);
+                    pollInterval = setInterval(updateProgress, 5000); // Slow polling when idle
                 }
             });
     }
 
-    // 2. DATA PREVIEW TOGGLE
     function togglePreview() {
         const container = document.getElementById('previewContainer');
         const btn = document.getElementById('previewBtn');
@@ -150,29 +181,22 @@
 
         if (container.style.display === "none") {
             btn.innerText = "Fetching...";
-            btn.disabled = true;
-
             fetch('/admin/data_preview')
                 .then(res => res.text())
                 .then(html => {
                     body.innerHTML = html;
                     container.style.display = "block";
-                    btn.disabled = false;
                     btn.innerText = "Hide Preview";
-                    
-                    const rowCount = body.getElementsByTagName('tr').length;
-                    counter.innerText = rowCount + " Photos Total";
+                    counter.innerText = body.getElementsByTagName('tr').length + " Photos";
                 });
         } else {
             container.style.display = "none";
             btn.innerText = "Fetch & View Full DB";
-            counter.innerText = "";
         }
     }
 
-    // Start Polling every 4 seconds
-    setInterval(updateScanStatus, 4000);
-    updateScanStatus(); // Initial check
+    // Initialize
+    updateProgress();
 </script>
 
 </body>

@@ -20,6 +20,8 @@ scan_status_info = {
     "last_run": "Never"
 }
 
+dry_run_stop_requested = False
+
 # SSL Context for Geopy on Synology
 ctx = ssl.create_default_context(cafile=certifi.where())
 geolocator = Nominatim(
@@ -225,6 +227,63 @@ def db_reset():
 def full_image(p):
     # Fixed to work with absolute paths on Synology
     return send_file('/' + p)
+    
+@app.route('/admin/dry_run', methods=['POST'])
+def dry_run():
+    global dry_run_stop_requested
+    dry_run_stop_requested = False
+    
+    data = request.json
+    folder_path = data.get('path')
+    offset = data.get('offset', 0)
+    limit = 20  # Number of photos per "More" click
+    
+    if not os.path.exists(folder_path):
+        return jsonify({"error": "Path not found"}), 400
+
+    # 1. Get all compatible files to calculate the total
+    all_files = []
+    for root, _, files in os.walk(folder_path):
+        for file in sorted(files):
+            if file.lower().endswith(('.jpg', '.jpeg')):
+                all_files.append(os.path.join(root, file))
+    
+    total_count = len(all_files)
+    batch_files = all_files[offset : offset + limit]
+    
+    results = []
+    for full_path in batch_files:
+        if dry_run_stop_requested:
+            break
+            
+        file_name = os.path.basename(full_path)
+        gps = extract_gps(full_path)
+        
+        res_item = {"name": file_name, "gps": gps or "No GPS", "city": "-", "country": "-"}
+        if gps:
+            try:
+                loc = geolocator.reverse(gps, language='en', timeout=5)
+                addr = loc.raw.get('address', {})
+                res_item["city"] = addr.get('city') or addr.get('town') or "-"
+                res_item["country"] = addr.get('country') or "-"
+            except: pass
+        results.append(res_item)
+
+    new_offset = offset + len(batch_files)
+    finished = new_offset >= total_count or dry_run_stop_requested
+
+    return jsonify({
+        "results": results, 
+        "offset": new_offset, 
+        "total": total_count,
+        "finished": finished
+    })
+
+@app.route('/admin/stop_dry_run', methods=['POST'])
+def stop_dry_run():
+    global dry_run_stop_requested
+    dry_run_stop_requested = True
+    return jsonify({"status": "stopping"})
 
 if __name__ == '__main__':
     init_db()

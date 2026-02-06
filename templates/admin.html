@@ -12,9 +12,10 @@
         
         /* Buttons */
         button { border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+        button:disabled { cursor: not-allowed; opacity: 0.5; }
         .btn-blue { background: #0084ff; color: white; width: 100%; font-size: 1.1em; }
         .btn-red { background: #fa3e3e; color: white; }
-        .btn-green { background: #42b72a; color: white; text-decoration: none; display: inline-block; }
+        .btn-green { background: #42b72a; color: white; }
         .btn-grey { background: #e4e6eb; color: #050505; }
         
         /* Progress Bar */
@@ -23,26 +24,29 @@
         #progressBar { width: 0%; height: 100%; background: #0084ff; transition: width 0.3s ease; }
         .scan-info { display: flex; justify-content: space-between; font-size: 0.9em; color: #65676b; margin-bottom: 5px; }
 
-        /* Form elements */
-        input[type="text"], input[type="number"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 1em; }
-        .path-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f0f2f5; }
-        code { background: #f0f2f5; padding: 4px 8px; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; }
+        /* Managed Folders Layout */
+        .path-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #f0f2f5; }
+        .path-info { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; }
+        .path-actions { display: flex; gap: 10px; align-items: center; margin-left: 20px; }
+        code { background: #f0f2f5; padding: 4px 8px; border-radius: 4px; font-family: monospace; }
 
-        /* Scrollable Table */
-        .table-wrapper { height: 600px; overflow-y: scroll; border: 1px solid #ddd; border-radius: 8px; margin-top: 15px; }
+        /* Loader Spinner */
+        .loader { border: 2px solid #f3f3f3; border-top: 2px solid currentColor; border-radius: 50%; width: 12px; height: 12px; animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Table & Previews */
+        .table-wrapper { height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; margin-top: 15px; }
         table { width: 100%; border-collapse: collapse; font-size: 0.85em; text-align: left; }
-        thead { position: sticky; top: 0; background: #f8f9fa; z-index: 10; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
         th, td { padding: 12px; border: 1px solid #eee; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <p><a href="/" style="text-decoration: none; color: #0084ff;">  Back to Search</a></p>
+    <p><a href="/" style="text-decoration: none; color: #0084ff;">    Back to Search</a></p>
 
     <div class="card">
-        <h2>    Manual Scan Control</h2>
-        
+        <h2>    Full System Scan</h2>
         <div id="scanInitial">
             <button onclick="startScan()" class="btn-blue">Start Full Scan Now</button>
         </div>
@@ -53,151 +57,241 @@
                     <span id="currentFile">Initializing...</span>
                     <span id="percentText">0%</span>
                 </div>
-                <div class="progress-container">
-                    <div id="progressBar"></div>
-                </div>
+                <div class="progress-container"><div id="progressBar"></div></div>
             </div>
-            <button onclick="stopScan()" class="btn-red" style="width: 100%; margin-top: 10px;">Stop Current Scan</button>
+            <button onclick="stopScan()" class="btn-red" style="width: 100%; margin-top: 10px;">Stop Global Scan</button>
         </div>
-
         <p style="margin-top: 15px;"><small>Last successful run: <strong id="lastRun">{{ scan_info['last_run'] or 'Never' }}</strong></small></p>
     </div>
 
     <div class="card">
-        <h3>    Managed Folders</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="margin: 0;">    Managed Folders</h3>
+            <button id="closeDryBtn" class="btn-grey" style="display: none; padding: 5px 12px; font-size: 0.85em;" onclick="closeDryRun()">Clear Dry Run Results</button>
+        </div>
+
         {% for p in watched_paths %}
         <div class="path-row">
-            <code>{{ p['path'] }}</code>
-            <form method="POST">
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="path_id" value="{{ p['id'] }}">
-                <button type="submit" class="btn-red" style="padding: 5px 12px;">Remove</button>
-            </form>
+            <div class="path-info"><code>{{ p['path'] }}</code></div>
+            <div class="path-actions">
+                <button type="button" id="dryBtn-{{ loop.index }}" class="btn-grey" style="min-width: 140px;" onclick="handleDryRunClick('{{ p['path'] }}', '{{ loop.index }}')">
+                    Dry Run Scan
+                </button>
+                <form method="POST" style="margin: 0;">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="path_id" value="{{ p['id'] }}">
+                    <button type="submit" class="btn-red" style="padding: 5px 12px;">Remove</button>
+                </form>
+            </div>
         </div>
         {% endfor %}
+
         <form method="POST" style="margin-top: 20px; display: flex; gap: 10px;">
             <input type="hidden" name="action" value="add">
-            <input type="text" name="new_path" placeholder="/volume1/pictures/2024" style="flex-grow: 1;" required>
+            <input type="text" name="new_path" placeholder="/volume1/photos/2026" style="flex-grow: 1; padding: 10px; border-radius: 8px; border: 1px solid #ddd;" required>
             <button type="submit" class="btn-green">Add Path</button>
         </form>
+
+		<div id="dryRunSection" style="display: none; margin-top: 25px; border: 1px dashed #0084ff; border-radius: 8px; padding: 15px; background: #f8fbff;">
+		    <h4 style="margin-top: 0; color: #0084ff;">    Dry Run Results</h4>
+		    <div id="dryRunOutput" style="max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85em; background: white; padding: 10px; border-radius: 4px; border: 1px solid #d0e3ff;"></div>
+		    
+		    <div style="margin-top: 10px; display: flex; align-items: center; gap: 15px;">
+		        <button id="dryScanMoreBtn" class="btn-grey" style="flex-grow: 1; display: none;" onclick="startDryRun()">
+		            Dry Scan More...
+		        </button>
+		        <span id="dryRunCounter" style="font-size: 0.85em; color: #65676b; white-space: nowrap; display: none;"></span>
+		    </div>
+		</div>
     </div>
 
     <div class="card">
         <h3>    Auto-Scan Frequency</h3>
         <form method="POST">
             <input type="hidden" name="action" value="update_interval">
-            Run automated scan every 
-            <input type="number" name="interval" value="{{ settings['scan_interval_hours'] }}" min="1" max="168" style="width: 60px;"> 
-            hours.
-            <button type="submit" class="btn-grey" style="margin-left: 10px;">Update</button>
+            Run scan every <input type="number" name="interval" value="{{ settings['scan_interval_hours'] }}" min="1" max="168" style="width: 60px; padding: 5px;"> hours.
+            <button type="submit" class="btn-grey">Update</button>
         </form>
     </div>
 
     <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h3>    Full Database Preview</h3>
-            <span id="recordCount" style="font-weight: bold; color: #0084ff; background: #e7f3ff; padding: 4px 12px; border-radius: 20px; font-size: 0.85em;"></span>
+            <h3>    Database Preview</h3>
+            <span id="recordCount" style="font-weight: bold; color: #0084ff;"></span>
         </div>
-        <button type="button" id="previewBtn" class="btn-grey" onclick="togglePreview()">Fetch & View Full DB</button>
-
+        <button type="button" id="previewBtn" class="btn-grey" onclick="togglePreview()">Fetch & View Data</button>
         <div id="previewContainer" style="display: none;">
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr><th>Local Path</th><th>GPS</th><th>City</th><th>Country</th></tr>
-                    </thead>
-                    <tbody id="previewBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <div class="card" style="border-top: 3px solid #fa3e3e;">
-        <h3>    Maintenance</h3>
-        <div style="display: flex; gap: 15px;">
-            <a href="/admin/db_dump" class="btn-green" style="padding: 10px 20px;">Backup DB</a>
-            <form action="/admin/db_reset" method="POST" onsubmit="return confirm('Erase everything?');">
-                <button type="submit" class="btn-red">Reset Database</button>
-            </form>
+            <div class="table-wrapper"><table id="previewTable"><thead><tr><th>Path</th><th>GPS</th><th>City</th><th>Country</th></tr></thead><tbody id="previewBody"></tbody></table></div>
         </div>
     </div>
 </div>
 
 <script>
-    let pollInterval;
+    let pollInterval = null;
+    let currentDryRunIndex = null;
 
+    // --- BUTTON LOCKING LOGIC ---
+    function toggleAllButtons(disabled) {
+        // Disable Full Scan Button
+        const mainBtn = document.querySelector('#scanInitial button');
+        if (mainBtn) mainBtn.disabled = disabled;
+        
+        // Disable Add/Update buttons
+        document.querySelectorAll('.btn-green, .btn-grey').forEach(b => {
+            if (!b.id.includes('dryBtn') && b.id !== 'previewBtn') b.disabled = disabled;
+        });
+
+        // Disable Dry Run buttons (except the active one)
+        document.querySelectorAll('[id^="dryBtn-"]').forEach(b => {
+            const idx = b.id.split('-')[1];
+            if (currentDryRunIndex !== idx) b.disabled = disabled;
+        });
+    }
+
+    // --- GLOBAL SCAN ---
     function startScan() {
-        fetch('/start_scan', {method: 'POST'})
-            .then(() => {
-                document.getElementById('scanInitial').style.display = 'none';
-                document.getElementById('scanActive').style.display = 'block';
-                startPolling();
-            });
+        toggleAllButtons(true);
+        fetch('/start_scan', {method: 'POST'}).then(() => {
+            document.getElementById('scanInitial').style.display = 'none';
+            document.getElementById('scanActive').style.display = 'block';
+            startPolling();
+        });
     }
 
     function stopScan() {
-        if (confirm("Interrupt scan? Current progress will be saved.")) {
-            fetch('/stop_scan', {method: 'POST'});
-        }
+        if (confirm("Stop global scan?")) fetch('/stop_scan', {method: 'POST'});
     }
 
     function startPolling() {
         if (pollInterval) clearInterval(pollInterval);
-        pollInterval = setInterval(updateProgress, 1000); // Fast polling during active scan
+        pollInterval = setInterval(updateProgress, 1000);
     }
 
     function updateProgress() {
-        fetch('/scan_progress')
-            .then(res => res.json())
-            .then(data => {
-                const initialDiv = document.getElementById('scanInitial');
-                const activeDiv = document.getElementById('scanActive');
-                const bar = document.getElementById('progressBar');
-                const percentText = document.getElementById('percentText');
-                const fileText = document.getElementById('currentFile');
-                const lastRunText = document.getElementById('lastRun');
+        fetch('/scan_progress').then(res => res.json()).then(data => {
+            const bar = document.getElementById('progressBar');
+            const fileText = document.getElementById('currentFile');
+            const lastRunText = document.getElementById('lastRun');
 
-                if (data.active) {
-                    initialDiv.style.display = 'none';
-                    activeDiv.style.display = 'block';
-                    bar.style.width = data.percentage + '%';
-                    percentText.innerText = data.percentage + '%';
-                    fileText.innerText = "Processing: " + data.current_file;
-                } else {
-                    initialDiv.style.display = 'block';
-                    activeDiv.style.display = 'none';
-                    lastRunText.innerText = data.last_run;
+            if (data.active) {
+                toggleAllButtons(true);
+                document.getElementById('scanInitial').style.display = 'none';
+                document.getElementById('scanActive').style.display = 'block';
+                bar.style.width = data.percentage + '%';
+                document.getElementById('percentText').innerText = data.percentage + '%';
+                fileText.innerText = "Processing: " + data.current_file;
+            } else {
+                document.getElementById('scanInitial').style.display = 'block';
+                document.getElementById('scanActive').style.display = 'none';
+                if (lastRunText) lastRunText.innerText = data.last_run;
+                
+                // SILENT ON IDLE: Stop requests if no scan is active
+                if (pollInterval && currentDryRunIndex === null) {
                     clearInterval(pollInterval);
-                    pollInterval = setInterval(updateProgress, 5000); // Slow polling when idle
+                    pollInterval = null;
+                    toggleAllButtons(false);
                 }
-            });
+            }
+        });
+    }
+
+    // --- DRY RUN SCAN ---
+	let dryRunState = { path: null, index: null, offset: 0 };
+	
+	function handleDryRunClick(path, index) {
+	    const btn = document.getElementById(`dryBtn-${index}`);
+	    if (currentDryRunIndex === index) {
+	        btn.innerText = "Stopping...";
+	        btn.disabled = true;
+	        fetch('/admin/stop_dry_run', {method: 'POST'});
+	        return;
+	    }
+	    
+	    // New scan: Reset everything
+	    dryRunState = { path: path, index: index, offset: 0 };
+	    document.getElementById('dryRunOutput').innerHTML = "";
+	    document.getElementById('dryRunCounter').style.display = 'none';
+	    startDryRun();
+	}
+
+	function startDryRun() {
+	    const btn = document.getElementById(`dryBtn-${dryRunState.index}`);
+	    const moreBtn = document.getElementById('dryScanMoreBtn');
+	    const counter = document.getElementById('dryRunCounter');
+	    
+	    currentDryRunIndex = dryRunState.index;
+	    toggleAllButtons(true);
+	    
+	    btn.disabled = false;
+	    btn.innerHTML = `<div class="loader"></div> Stop Scan`;
+	    btn.classList.replace('btn-grey', 'btn-red');
+	    moreBtn.style.display = 'none';
+	
+	    fetch('/admin/dry_run', {
+	        method: 'POST',
+	        headers: {'Content-Type': 'application/json'},
+	        body: JSON.stringify({path: dryRunState.path, offset: dryRunState.offset})
+	    })
+	    .then(res => res.json())
+	    .then(data => {
+	        const output = document.getElementById('dryRunOutput');
+	        document.getElementById('dryRunSection').style.display = 'block';
+	        document.getElementById('closeDryBtn').style.display = 'inline-block';
+	        
+	        data.results.forEach(item => {
+	            const div = document.createElement('div');
+	            div.style.padding = "4px 0";
+	            div.style.borderBottom = "1px solid #eee";
+	            div.innerHTML = `<strong>${item.name}</strong> | ${item.gps} | ${item.city}, ${item.country}`;
+	            output.appendChild(div);
+	        });
+	
+	        dryRunState.offset = data.offset;
+	        
+	        // Update Counter: "Scanned 20 of 150"
+	        counter.innerText = `Scanned ${data.offset} of ${data.total}`;
+	        counter.style.display = 'inline-block';
+	
+	        if (!data.finished) {
+	            moreBtn.style.display = 'block';
+	        } else {
+	            const endMsg = document.createElement('div');
+	            endMsg.style.textAlign = "center";
+	            endMsg.style.padding = "10px";
+	            endMsg.style.color = "#42b72a";
+	            endMsg.innerHTML = "    Folder fully scanned.";
+	            output.appendChild(endMsg);
+	        }
+	    })
+	    .finally(() => {
+	        btn.innerHTML = "Dry Run Scan";
+	        btn.classList.replace('btn-red', 'btn-grey');
+	        currentDryRunIndex = null;
+	        toggleAllButtons(false);
+	    });
+	}
+
+    function closeDryRun() {
+        document.getElementById('dryRunSection').style.display = 'none';
+        document.getElementById('closeDryBtn').style.display = 'none';
     }
 
     function togglePreview() {
         const container = document.getElementById('previewContainer');
-        const btn = document.getElementById('previewBtn');
-        const body = document.getElementById('previewBody');
-        const counter = document.getElementById('recordCount');
-
         if (container.style.display === "none") {
-            btn.innerText = "Fetching...";
-            fetch('/admin/data_preview')
-                .then(res => res.text())
-                .then(html => {
-                    body.innerHTML = html;
-                    container.style.display = "block";
-                    btn.innerText = "Hide Preview";
-                    counter.innerText = body.getElementsByTagName('tr').length + " Photos";
-                });
+            fetch('/admin/data_preview').then(res => res.text()).then(html => {
+                document.getElementById('previewBody').innerHTML = html;
+                container.style.display = "block";
+                document.getElementById('previewBtn').innerText = "Hide Preview";
+            });
         } else {
             container.style.display = "none";
-            btn.innerText = "Fetch & View Full DB";
+            document.getElementById('previewBtn').innerText = "Fetch & View Data";
         }
     }
 
-    // Initialize
+    // Single check on page load to see if we need to resume polling
     updateProgress();
 </script>
-
 </body>
 </html>

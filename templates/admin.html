@@ -134,6 +134,8 @@
                             <th>File Name</th>
                             <th>Date Taken</th>
                             <th>City</th>
+                            <th>County</th>
+                            <th>Region</th>
                             <th>Country</th>
                         </tr>
                     </thead>
@@ -201,30 +203,46 @@
     }
 
     function updateProgress() {
-        fetch('/scan_progress').then(res => res.json()).then(data => {
-            const bar = document.getElementById('progressBar');
-            const fileText = document.getElementById('currentFile');
-            const lastRunText = document.getElementById('lastRun');
+        fetch('/scan_progress')
+            .then(res => res.json())
+            .then(data => {
+                const bar = document.getElementById('progressBar');
+                const fileText = document.getElementById('currentFile');
+                const lastRunText = document.getElementById('lastRun');
+                const initialDiv = document.getElementById('scanInitial');
+                const activeDiv = document.getElementById('scanActive');
 
-            if (data.active) {
-                toggleAllButtons(true);
-                document.getElementById('scanInitial').style.display = 'none';
-                document.getElementById('scanActive').style.display = 'block';
-                bar.style.width = data.percentage + '%';
-                document.getElementById('percentText').innerText = data.percentage + '%';
-                fileText.innerText = "Processing: " + data.current_file;
-            } else {
-                document.getElementById('scanInitial').style.display = 'block';
-                document.getElementById('scanActive').style.display = 'none';
-                if (lastRunText) lastRunText.innerText = data.last_run;
-                
-                if (pollInterval && currentDryRunIndex === null) {
-                    clearInterval(pollInterval);
-                    pollInterval = null;
-                    toggleAllButtons(false);
+                if (data.active) {
+                    // 1. Lock buttons and swap views
+                    toggleAllButtons(true);
+                    initialDiv.style.display = 'none';
+                    activeDiv.style.display = 'block';
+                    
+                    // 2. Update visuals
+                    bar.style.width = data.percentage + '%';
+                    document.getElementById('percentText').innerText = data.percentage + '%';
+                    fileText.innerText = "Processing: " + data.current_file;
+
+                    // 3. RE-START POLLING if it's not already running
+                    // This is what fixes the "back from index" bug
+                    if (!pollInterval) {
+                        startPolling();
+                    }
+                } else {
+                    // Scan is idle
+                    initialDiv.style.display = 'block';
+                    activeDiv.style.display = 'none';
+                    if (lastRunText) lastRunText.innerText = data.last_run;
+                    
+                    // Kill polling to save resources
+                    if (pollInterval && currentDryRunIndex === null) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        toggleAllButtons(false);
+                    }
                 }
-            }
-        });
+            })
+            .catch(err => console.error("Polling error:", err));
     }
 
     // --- DRY RUN SCAN ---

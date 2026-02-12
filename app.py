@@ -67,7 +67,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             pic_local_path TEXT UNIQUE, 
             gps_position TEXT, 
-            city TEXT, state TEXT, country TEXT, country_code TEXT,
+            city TEXT, county TEXT, state TEXT, country TEXT, country_code TEXT,
             folder_name TEXT,
             date_taken TEXT
         )''')
@@ -151,10 +151,11 @@ def scan_photos_task():
                     
                     country_iso_3 = ISO2_TO_ISO3.get(raw_code)
 
-                    conn.execute("""INSERT INTO photos (pic_local_path, gps_position, city, state, country, country_code, folder_name, date_taken) 
-                                    VALUES (?,?,?,?,?,?,?,?)""",
+                    conn.execute("""INSERT INTO photos (pic_local_path, gps_position, city, county, state, country, country_code, folder_name, date_taken) 
+                                    VALUES (?,?,?,?,?,?,?,?,?)""",
                                 (full_path, gps, 
                                  addr.get('city') or addr.get('town') or addr.get('village'), 
+                                 addr.get('county'),
                                  addr.get('state'), addr.get('country'),
                                  country_iso_3, folder_name, date_taken))
                     conn.commit()
@@ -190,8 +191,9 @@ def index():
     query = request.form.get('query', '')
     if query:
         lq = f"%{query}%"
-        results = conn.execute("""SELECT * FROM photos WHERE city LIKE ? OR state LIKE ? 
-                                  OR country LIKE ? OR folder_name LIKE ?""", (lq, lq, lq, lq)).fetchall()
+        results = conn.execute("""SELECT * FROM photos WHERE city LIKE ? OR county LIKE ?
+                                  OR state LIKE ? 
+                                  OR country LIKE ? OR folder_name LIKE ?""", (lq, lq, lq, lq, lq)).fetchall()
     conn.close()
     return render_template('index.html', results=results, query=query, visited_data=visited_data)
 
@@ -241,7 +243,7 @@ def data_preview():
         return "<tr><td colspan='6' style='text-align:center;'>Database is empty.</td></tr>"
     html = ""
     for row in db_content:
-        html += f"<tr><td>{row['folder_name']}</td><td>{os.path.basename(row['pic_local_path'])}</td><td>{row['date_taken'] or '-'}</td><td>{row['city'] or '-'}</td><td>{row['country'] or '-'}</td></tr>"
+        html += f"<tr><td>{row['folder_name']}</td><td>{os.path.basename(row['pic_local_path'])}</td><td>{row['date_taken'] or '-'}</td><td>{row['city'] or '-'}</td><td>{row['county'] or '-'}</td><td>{row['state'] or '-'}</td><td>{row['country'] or '-'}</td></tr>"
     return html
 
 @app.route('/admin/db_reset', methods=['POST'])
@@ -290,6 +292,7 @@ def dry_run():
             try:
                 loc = geolocator.reverse(gps, language='en', timeout=5)
                 addr = loc.raw.get('address', {})
+                print(loc.raw)
                 res_item["city"] = addr.get('city') or addr.get('town') or "-"
                 res_item["country"] = addr.get('country') or "-"
             except: pass

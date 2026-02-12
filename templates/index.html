@@ -110,39 +110,44 @@
 
 <script>
     window.onload = function() {
-        const visitedCountries = {{ visited_countries|tojson }};
+        // visited_data comes from Flask as a list of dicts: [{'code': 'HUN', 'name': 'Hungary'}, ...]
+        const visitedData = {{ visited_data|tojson }};
         const tooltip = document.getElementById('custom-tooltip');
-        
-        const isoMapping = {
-            "United States": "USA", "France": "FRA", "Italy": "ITA", "Germany": "DEU",
-            "Spain": "ESP", "United Kingdom": "GBR", "Canada": "CAN", "Japan": "JPN",
-            "India": "IND", "China": "CHN", "Netherlands": "NLD", "Switzerland": "CHE"
-        };
 
+        // Build the dataset using the ISO codes directly from the DB
         const dataset = {};
-        visitedCountries.forEach(name => {
-            const code = isoMapping[name];
-            if (code) dataset[code] = { fillKey: 'VISITED', countryName: name };
+        visitedData.forEach(item => {
+            if (item.code) {
+                dataset[item.code] = { 
+                    fillKey: 'VISITED', 
+                    countryName: item.name 
+                };
+            }
         });
 
         const map = new Datamap({
             element: document.getElementById('map-inner'),
             projection: 'mercator',
-            fills: { defaultFill: '#333', VISITED: '#0084ff' },
+            fills: { 
+                defaultFill: '#333', 
+                VISITED: '#0084ff' 
+            },
             data: dataset,
             geographyConfig: {
                 borderColor: '#222',
-                highlightOnHover: false, 
-                popupOnHover: false      
+                highlightOnHover: false, // Prevents default flicker
+                popupOnHover: false      // Uses our custom black tooltip
             },
             done: function(datamap) {
                 datamap.svg.selectAll('.datamaps-subunit')
                 .on('mouseover', function(geo) {
                     if (dataset[geo.id]) {
+                        // Visited: Glow blue and show name
                         d3.select(this).style('fill', '#00bfff').style('cursor', 'pointer');
-                        tooltip.innerHTML = '<strong>' + geo.properties.name + '</strong>';
+                        tooltip.innerHTML = '<strong>' + dataset[geo.id].countryName + '</strong>';
                         tooltip.style.display = 'block';
                     } else {
+                        // Non-visited: Stay dark
                         d3.select(this).style('fill', '#333').style('cursor', 'default');
                         tooltip.style.display = 'none';
                     }
@@ -152,11 +157,13 @@
                     tooltip.style.top = (d3.event.pageY - 10) + 'px';
                 })
                 .on('mouseout', function(geo) {
+                    // Revert to original color based on presence in dataset
                     d3.select(this).style('fill', dataset[geo.id] ? '#0084ff' : '#333');
                     tooltip.style.display = 'none';
                 })
                 .on('click', function(geo) {
                     if (dataset[geo.id]) {
+                        // Auto-fill the search bar and submit
                         document.getElementById('queryInput').value = dataset[geo.id].countryName;
                         document.getElementById('searchForm').submit();
                     }

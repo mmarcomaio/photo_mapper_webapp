@@ -120,6 +120,42 @@
     </div>
 
     <div class="card">
+        <h3>📍 Add Position to Folders</h3>
+        <p style="font-size: 0.85em; color: #65676b;">Manually set location for photos missing GPS data.</p>
+        
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+                <thead>
+                    <tr style="background: #f8f9fa;">
+                        <th style="padding: 8px;">Folder Name</th>
+                        <th style="padding: 8px;">City</th>
+                        <th style="padding: 8px;">County</th>
+                        <th style="padding: 8px;">State</th>
+                        <th style="padding: 8px;">Country</th>
+                        <th style="padding: 8px;">ISO Code</th>
+                        <th style="padding: 8px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <select id="manualFolderSelect" style="width: 100%; padding: 5px;"></select>
+                        </td>
+                        <td><input type="text" id="mCity" style="width: 80px;"></td>
+                        <td><input type="text" id="mCounty" style="width: 80px;"></td>
+                        <td><input type="text" id="mState" style="width: 80px;"></td>
+                        <td><input type="text" id="mCountry" style="width: 80px;"></td>
+                        <td><input type="text" id="mCode" style="width: 40px;" placeholder="e.g. HU"></td>
+                        <td>
+                            <button onclick="submitManualUpdate()" class="btn-green" style="padding: 5px 10px;">Update</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
             <h3>📊 Database Preview (Latest 50)</h3>
             <span id="recordCount" style="font-weight: bold; color: #0084ff;"></span>
@@ -325,7 +361,46 @@
             btn.innerText = "Fetch & View Data";
         }
     }
+    
+    // Load folders with empty positions on page load
+    function loadEmptyFolders() {
+        fetch('/admin/get_empty_folders')
+            .then(res => res.json())
+            .then(folders => {
+                const select = document.getElementById('manualFolderSelect');
+                select.innerHTML = folders.map(f => `<option value="${f}">${f}</option>`).join('');
+            });
+    }
 
+    function submitManualUpdate() {
+        const data = {
+            folder: document.getElementById('manualFolderSelect').value,
+            city: document.getElementById('mCity').value,
+            county: document.getElementById('mCounty').value,
+            state: document.getElementById('mState').value,
+            country: document.getElementById('mCountry').value,
+            code: document.getElementById('mCode').value
+        };
+
+        if (!data.folder) return alert("Select a folder first!");
+
+        fetch('/admin/manual_update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(res => {
+            if(res.status === "success") {
+                alert("Folder updated!");
+                loadEmptyFolders(); // Refresh list
+                // Clear inputs
+                ['mCity', 'mCounty', 'mState', 'mCountry', 'mCode'].forEach(id => document.getElementById(id).value = '');
+            }
+        });
+    }
+
+    loadEmptyFolders();
     updateProgress();
 </script>
 </body>

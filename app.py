@@ -1,6 +1,7 @@
 import os, sqlite3, threading, exifread, time, schedule, io
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, send_file, jsonify
+import re
 import ssl
 import certifi
 import geopy.geocoders
@@ -110,7 +111,22 @@ def extract_date_taken(path):
     except: return None
 
 # --- CORE SCANNING LOGIC ---
-
+def get_ignored_patterns():
+    ignore_path = os.path.join(os.path.dirname(__file__), '.scanignore')
+    if not os.path.exists(ignore_path):
+        return []
+    patterns = []
+    with open(ignore_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                try:
+                    # Compile the pattern for better performance during the scan
+                    patterns.append(re.compile(line))
+                except re.error as e:
+                    print(f"Invalid regex in .scanignore: {line} -> {e}")
+    return patterns
+        
 def scan_photos_task():
     global scan_status_info
     if scan_status_info["active"]: return
@@ -122,10 +138,17 @@ def scan_photos_task():
     conn = get_db_connection()
     paths = [row['path'] for row in conn.execute("SELECT path FROM scan_paths").fetchall()]
     
+    ignored_regexes = get_ignored_patterns()
     all_files = []
     for base_path in paths:
         if not os.path.exists(base_path): continue
-        for root, _, files in os.walk(base_path):
+        for root, dirs, files in os.walk(base_path):
+            if ignored_regexes:
+                dirs[:] = [
+                    d for d in dirs 
+                    if not any(pattern.search(d) for pattern in ignored_regexes)
+                ]
+                
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg')):
                     all_files.append(os.path.join(root, file))
@@ -141,9 +164,9 @@ def scan_photos_task():
 
         if not conn.execute("SELECT 1 FROM photos WHERE pic_local_path=?", (full_path,)).fetchone():
             gps = extract_gps(full_path)
+            folder_name = os.path.basename(os.path.dirname(full_path))
+            date_taken = extract_date_taken(full_path)
             if gps:
-                folder_name = os.path.basename(os.path.dirname(full_path))
-                date_taken = extract_date_taken(full_path)
                 try:
                     loc = geolocator.reverse(gps, language='en', timeout=10)
                     addr = loc.raw.get('address', {})
@@ -162,6 +185,13 @@ def scan_photos_task():
                     time.sleep(1.1) # Respect Nominatim usage policy
                 except Exception as e:
                     print(f"Geocoding error for {full_path}: {e}")
+            else:
+                conn.execute("""INSERT INTO photos (pic_local_path, gps_position, city, county, state, country, country_code, folder_name, date_taken) 
+                                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                                (full_path,'', '', '', '', '', '', 
+                                 folder_name, date_taken))
+                conn.commit()
+                
     
     last_run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute("UPDATE settings SET last_run = ? WHERE id = 1", (last_run_time,))
@@ -206,7 +236,20 @@ def admin():
             path = request.form.get('new_path')
             if path: conn.execute("INSERT OR IGNORE INTO scan_paths (path) VALUES (?)", (path,))
         elif action == 'delete':
-            conn.execute("DELETE FROM scan_paths WHERE id = ?", (request.form.get('path_id'),))
+            path_id = request.form.get('path_id')
+            # 1. Get the actual path string before deleting the reference
+            path_row = conn.execute("SELECT path FROM scan_paths WHERE id = ?", (path_id,)).fetchone()
+            
+            if path_row:
+                target_path = path_row['path']
+                # 2. Delete all photos that start with this path
+                # We use the LIKE operator with a wildcard to catch all subfolders
+                conn.execute("DELETE FROM photos WHERE pic_local_path LIKE ?", (target_path + '%',))
+                
+                # 3. Remove the folder from managed paths
+                conn.execute("DELETE FROM scan_paths WHERE id = ?", (path_id,))
+                
+                print(f"Cleaned DB: Removed photos belonging to {target_path}")
         elif action == 'update_interval':
             hrs = int(request.form.get('interval', 24))
             conn.execute("UPDATE settings SET scan_interval_hours = ? WHERE id = 1", (hrs,))
@@ -233,6 +276,40 @@ def stop_scan():
 @app.route('/scan_progress')
 def scan_progress():
     return jsonify(scan_status_info)
+
+@app.route('/admin/get_empty_folders')
+def get_empty_folders():
+    conn = get_db_connection()
+    # Find distinct folders where country is missing/empty
+    query = "SELECT DISTINCT folder_name FROM photos WHERE country IS NULL OR country = ''"
+    folders = conn.execute(query).fetchall()
+    conn.close()
+    return jsonify([f['folder_name'] for f in folders])
+
+@app.route('/admin/manual_update', methods=['POST'])
+def manual_update():
+    data = request.json
+    folder = data.get('folder')
+    # Get values, defaulting to empty string if not provided
+    city = data.get('city', '')
+    county = data.get('county', '')
+    state = data.get('state', '')
+    country = data.get('country', '')
+    code = data.get('code', '').upper()
+    
+    # If code is 2 letters, try to map to 3
+    if len(code) == 2:
+        code = ISO2_TO_ISO3.get(code, code)
+
+    conn = get_db_connection()
+    conn.execute("""
+        UPDATE photos 
+        SET city=?, county=?, state=?, country=?, country_code=? 
+        WHERE folder_name=? AND (country IS NULL OR country = '')
+    """, (city, county, state, country, code, folder))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success"})
 
 @app.route('/admin/data_preview')
 def data_preview():
